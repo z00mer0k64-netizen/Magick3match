@@ -3,9 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Match-3 + Магазин</title>
+  <title>Match-3 Фрукты v2</title>
   <style>
-    /* базовые стили как раньше + новые */
     body {
       margin: 0;
       background: #1a1a2e;
@@ -31,10 +30,7 @@
       color: #000;
       font-weight: bold;
     }
-    #boosters {
-      display: flex;
-      gap: 6px;
-    }
+    #boosters { display: flex; gap: 6px; }
     .booster-btn {
       background: #2d2d44;
       border: none;
@@ -63,6 +59,7 @@
       border-radius: 12px;
       box-shadow: 0 0 20px rgba(0,0,0,0.5);
       touch-action: none;
+      background: #1b1b3a;
     }
     #info {
       margin-top: 8px;
@@ -128,9 +125,9 @@
 <div id="top-bar">
   <div id="gold-display">🪙 <span id="goldAmount">0</span></div>
   <div id="boosters">
-    <button class="booster-btn" id="hammerBtn" data-type="hammer">🔨 <span class="booster-count">0</span></button>
-    <button class="booster-btn" id="bombBtn" data-type="bomb">💣 <span class="booster-count">0</span></button>
-    <button class="booster-btn" id="shuffleBtn" data-type="shuffle">🔀 <span class="booster-count">0</span></button>
+    <button class="booster-btn" data-type="hammer">🔨 <span class="booster-count">0</span></button>
+    <button class="booster-btn" data-type="bomb">💣 <span class="booster-count">0</span></button>
+    <button class="booster-btn" data-type="shuffle">🔀 <span class="booster-count">0</span></button>
   </div>
   <button id="shop-btn">🛒</button>
 </div>
@@ -145,378 +142,445 @@
 
 <div id="shop-modal">
   <h3>Магазин</h3>
-  <div class="shop-item"><span>🔨 Молоток (5 зол.)</span> <button class="buy-btn" data-item="hammer">Купить</button></div>
-  <div class="shop-item"><span>💣 Бомба (15 зол.)</span> <button class="buy-btn" data-item="bomb">Купить</button></div>
-  <div class="shop-item"><span>🔀 Перемешивание (10 зол.)</span> <button class="buy-btn" data-item="shuffle">Купить</button></div>
+  <div class="shop-item"><span>🔨 Молоток (20 зол.)</span> <button class="buy-btn" data-item="hammer">Купить</button></div>
+  <div class="shop-item"><span>💣 Бомба (50 зол.)</span> <button class="buy-btn" data-item="bomb">Купить</button></div>
+  <div class="shop-item"><span>🔀 Перемешивание (30 зол.)</span> <button class="buy-btn" data-item="shuffle">Купить</button></div>
   <div class="shop-item"><span>🪙 100 золота</span> <button class="buy-btn" id="buyGoldBtn">⭐ Купить за Stars</button></div>
   <button id="close-shop">Закрыть</button>
 </div>
 
 <script>
-  (() => {
-    // ---------- состояние игры ----------
-    const canvas = document.getElementById('gameCanvas');
-    const ctx = canvas.getContext('2d');
-    const ROWS = 8, COLS = 8, TILE_SIZE = 40;
-    const COLORS = ['#ff6b6b', '#4ecdc4', '#ffe66d', '#a37eba', '#f78e5b', '#5dade2'];
-    const EMPTY = -1;
+(() => {
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  const ROWS = 8, COLS = 8, TILE_SIZE = 40;
+  // Базовый набор фруктов (первые 4 доступны сразу)
+  const ALL_FRUITS = ['🍎', '🍊', '🍋', '🍇', '🍓', '🍒'];
+  const FRUIT_COLORS = ['#ff4444', '#ff8c00', '#ffd700', '#8a2be2', '#ff69b4', '#ff0000'];
+  const EMPTY = -1;
 
-    let board = [];
-    let selectedTile = null;
-    let level = 1, xp = 0, xpToNext = 100;
-    let animationInProgress = false;
+  // DOM
+  const goldSpan = document.getElementById('goldAmount');
+  const levelDisplay = document.getElementById('levelDisplay');
+  const xpDisplay = document.getElementById('xpDisplay');
+  const levelFill = document.getElementById('level-fill');
+  const shopModal = document.getElementById('shop-modal');
+  const boosterBtns = document.querySelectorAll('.booster-btn');
 
-    // Новые ресурсы
-    let gold = 500; // стартовое золото для теста (потом можно 0)
-    const boosters = {
-      hammer: 1,  // количество
-      bomb: 1,
-      shuffle: 1
-    };
-    let activeBooster = null; // 'hammer', 'bomb', 'shuffle' или null
+  let board, selectedTile = null, level = 1, xp = 0, xpToNext = 100;
+  let animationInProgress = false, gold = 100;
+  const boosters = { hammer: 1, bomb: 1, shuffle: 1 };
+  let activeBooster = null;
+  let activeFruitCount = 4; // текущее количество видов фруктов
 
-    // ---------- вспомогательные функции ----------
-    function getEmptyBoard() { return Array(ROWS).fill().map(()=>Array(COLS).fill(EMPTY)); }
-    function randomTile() { return Math.floor(Math.random()*COLORS.length); }
+  // Анимации
+  let animations = [];
+  let particles = [];
+  let gameLoopId = null;
+  let pendingAction = null;
+  let lastTime = 0;
 
-    function fillBoardRandom() {
-      for (let r=0; r<ROWS; r++) for (let c=0; c<COLS; c++) board[r][c] = randomTile();
-      removeAllMatches(true);
+  function getEmptyBoard() { return Array(ROWS).fill().map(() => Array(COLS).fill(EMPTY)); }
+  function randomTile() { return Math.floor(Math.random() * activeFruitCount); }
+
+  // Обновление сложности по уровню
+  function updateDifficulty() {
+    // Новый фрукт каждые 3 уровня, начиная с 4-го (максимум 6)
+    activeFruitCount = Math.min(4 + Math.floor((level - 1) / 3), ALL_FRUITS.length);
+    // Увеличение требований к опыту: базовый рост *1.5, плюс каждые 3 уровня +20%
+    xpToNext = 100;
+    for (let i = 1; i < level; i++) {
+      xpToNext = Math.floor(xpToNext * 1.5);
+      if (i % 3 === 0) xpToNext = Math.floor(xpToNext * 1.2);
     }
+  }
 
-    function findMatches() {
-      const matches = Array(ROWS).fill().map(()=>Array(COLS).fill(false));
-      let found = false;
-      // горизонтальные
-      for (let r=0; r<ROWS; r++) {
-        for (let c=0; c<COLS-2; c++) {
-          const val = board[r][c];
-          if (val===EMPTY) continue;
-          if (board[r][c+1]===val && board[r][c+2]===val) {
-            let len=3; while(c+len<COLS && board[r][c+len]===val) len++;
-            for (let i=0; i<len; i++) matches[r][c+i]=true;
-            found=true;
-          }
-        }
-      }
-      // вертикальные
-      for (let c=0; c<COLS; c++) {
-        for (let r=0; r<ROWS-2; r++) {
-          const val = board[r][c];
-          if (val===EMPTY) continue;
-          if (board[r+1][c]===val && board[r+2][c]===val) {
-            let len=3; while(r+len<ROWS && board[r+len][c]===val) len++;
-            for (let i=0; i<len; i++) matches[r+i][c]=true;
-            found=true;
-          }
-        }
-      }
-      return { matches, found };
-    }
-
-    function removeMatches(matches) {
-      let removed=0;
-      for (let r=0; r<ROWS; r++) for (let c=0; c<COLS; c++) if(matches[r][c]) { board[r][c]=EMPTY; removed++; }
-      return removed;
-    }
-
-    function applyGravity() {
-      for (let c=0; c<COLS; c++) {
-        let wp = ROWS-1;
-        for (let r=ROWS-1; r>=0; r--) if(board[r][c]!==EMPTY) board[wp--][c]=board[r][c];
-        while(wp>=0) board[wp--][c]=randomTile();
-      }
-    }
-
-    function removeAllMatches(silent=false) {
-      let total=0, cascade=0;
-      while(true) {
-        const {matches, found} = findMatches();
-        if(!found) break;
-        total+=removeMatches(matches);
-        cascade++;
-        applyGravity();
-      }
-      if(!silent) {
-        addXP(total*10);
-        // золото за каскады: каждая фишка сверх первых 3 в комбинации даёт 1 золотой
-        // (упрощённо: дадим по 1 золотому за каждые 3 удалённые фишки)
-        if(cascade>1) gold += Math.floor(total/3);
-        else if(total>=6) gold += 1;
-      }
-      updateUI();
-      return total;
-    }
-
-    function addXP(amount) {
-      xp+=amount;
-      while(xp>=xpToNext) {
-        xp-=xpToNext;
-        level++;
-        xpToNext=Math.floor(xpToNext*1.5);
-        // бонус при повышении уровня: +20 золота
-        gold+=20;
-      }
-    }
-
-    function updateUI() {
-      document.getElementById('levelDisplay').textContent=`Ур. ${level}`;
-      document.getElementById('xpDisplay').textContent=`${xp}/${xpToNext} XP`;
-      document.getElementById('level-fill').style.width=`${(xp/xpToNext)*100}%`;
-      document.getElementById('goldAmount').textContent=gold;
-      document.getElementById('hammerBtn').querySelector('.booster-count').textContent=boosters.hammer;
-      document.getElementById('bombBtn').querySelector('.booster-count').textContent=boosters.bomb;
-      document.getElementById('shuffleBtn').querySelector('.booster-count').textContent=boosters.shuffle;
-    }
-
-    // ---------- бустеры ----------
-    function activateBooster(type) {
-      if (boosters[type] <= 0) return;
-      if (activeBooster === type) {
-        activeBooster = null;
-        updateBoosterButtons();
-        return;
-      }
-      activeBooster = type;
-      selectedTile = null; // сброс выделения
-      updateBoosterButtons();
-      drawBoard();
-    }
-
-    function updateBoosterButtons() {
-      document.querySelectorAll('.booster-btn').forEach(btn => {
-        const type = btn.dataset.type;
-        if (type === activeBooster) btn.classList.add('active-booster');
-        else btn.classList.remove('active-booster');
+  // Анимационные хелперы
+  function addMoveAnimation(rFrom, cFrom, rTo, cTo, tile, dur = 200) {
+    animations.push({ type: 'move', rFrom, cFrom, rTo, cTo, tile, progress: 0, duration: dur, startTime: performance.now() });
+  }
+  function addRemoveAnimation(r, c, tile, dur = 300) {
+    animations.push({ type: 'remove', r, c, tile, progress: 0, duration: dur, startTime: performance.now() });
+  }
+  function addAppearAnimation(r, c, tile, dur = 250) {
+    animations.push({ type: 'appear', r, c, tile, progress: 0, duration: dur, startTime: performance.now() });
+  }
+  function spawnParticles(row, col, fruitIndex) {
+    const cx = col * TILE_SIZE + TILE_SIZE/2;
+    const cy = row * TILE_SIZE + TILE_SIZE/2;
+    const color = FRUIT_COLORS[fruitIndex] || '#fff';
+    for (let i = 0; i < 8; i++) {
+      const angle = Math.random() * 2 * Math.PI;
+      const speed = 1 + Math.random() * 2.5;
+      particles.push({
+        x: cx, y: cy,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        life: 1,
+        decay: 0.015 + Math.random() * 0.02,
+        size: 2 + Math.random() * 3,
+        color
       });
     }
+  }
 
-    function useBooster(row, col) {
-      if (!activeBooster) return false;
-      if (boosters[activeBooster] <= 0) return false;
+  function startLoopIfNeeded() {
+    if (!gameLoopId) { lastTime = performance.now(); gameLoopId = requestAnimationFrame(gameLoop); }
+  }
+  function stopLoop() { if (gameLoopId) { cancelAnimationFrame(gameLoopId); gameLoopId = null; } }
+  function runAnimationThen(callback) { animationInProgress = true; pendingAction = callback; startLoopIfNeeded(); }
 
-      if (activeBooster === 'hammer') {
-        if (board[row][col] !== EMPTY) {
-          board[row][col] = EMPTY;
-          boosters.hammer--;
-          applyGravity();
-          removeAllMatches();
-          activeBooster = null;
-          updateBoosterButtons();
-          drawBoard();
-          return true;
+  function gameLoop(now) {
+    const dt = now - lastTime;
+    lastTime = now;
+    let allDone = true;
+    for (let a of animations) {
+      if (a.progress < 1) { allDone = false; a.progress = Math.min((now - a.startTime) / a.duration, 1); }
+    }
+    for (let p of particles) {
+      p.x += p.vx * dt * 0.06;
+      p.y += p.vy * dt * 0.06;
+      p.life -= p.decay * dt * 0.06;
+    }
+    particles = particles.filter(p => p.life > 0);
+    drawScene();
+    if (!allDone || particles.length > 0) gameLoopId = requestAnimationFrame(gameLoop);
+    else finishAnimations();
+  }
+
+  function finishAnimations() {
+    const moves = animations.filter(a => a.type === 'move');
+    for (let m of moves) {
+      if (board[m.rFrom][m.cFrom] === m.tile) board[m.rFrom][m.cFrom] = EMPTY;
+      board[m.rTo][m.cTo] = m.tile;
+    }
+    animations = [];
+    stopLoop();
+    if (pendingAction) { const act = pendingAction; pendingAction = null; act(); }
+    else { animationInProgress = false; updateUI(); drawScene(); }
+  }
+
+  // ----- ОТРИСОВКА -----
+  function drawTileBackground(x, y) {
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    ctx.fillRect(x + 2, y + 2, TILE_SIZE - 4, TILE_SIZE - 4);
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 2.5, y + 2.5, TILE_SIZE - 5, TILE_SIZE - 5);
+  }
+
+  function drawFruit(x, y, tile, scale = 1, alpha = 1) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(x + TILE_SIZE/2, y + TILE_SIZE/2);
+    ctx.scale(scale, scale);
+    drawTileBackground(-TILE_SIZE/2, -TILE_SIZE/2);
+    // Тень под эмодзи
+    ctx.shadowColor = 'rgba(0,0,0,0.5)';
+    ctx.shadowBlur = 4;
+    ctx.font = '32px "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(ALL_FRUITS[tile], 0, 2);
+    ctx.restore();
+  }
+
+  function drawScene() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (board[r][c] === EMPTY) continue;
+        let skip = animations.some(a =>
+          (a.type === 'move' && a.rFrom === r && a.cFrom === c && a.progress < 1) ||
+          (a.type === 'appear' && a.r === r && a.c === c && a.progress < 1)
+        );
+        if (!skip) drawFruit(c * TILE_SIZE, r * TILE_SIZE, board[r][c]);
+      }
+    }
+    // Анимируемые фрукты
+    for (let a of animations) {
+      if (a.type === 'move') {
+        const fromX = a.cFrom * TILE_SIZE + TILE_SIZE/2;
+        const fromY = a.rFrom * TILE_SIZE + TILE_SIZE/2;
+        const toX = a.cTo * TILE_SIZE + TILE_SIZE/2;
+        const toY = a.rTo * TILE_SIZE + TILE_SIZE/2;
+        const curX = fromX + (toX - fromX) * a.progress;
+        const curY = fromY + (toY - fromY) * a.progress;
+        drawFruit(curX - TILE_SIZE/2, curY - TILE_SIZE/2, a.tile);
+      } else if (a.type === 'remove') {
+        const scale = 1 + a.progress * 0.4;
+        const alpha = 1 - a.progress;
+        drawFruit(a.c * TILE_SIZE, a.r * TILE_SIZE, a.tile, scale, alpha);
+      } else if (a.type === 'appear') {
+        const scale = Math.min(a.progress * 1.2, 1);
+        const alpha = a.progress;
+        drawFruit(a.c * TILE_SIZE, a.r * TILE_SIZE, a.tile, scale, alpha);
+      }
+    }
+    // Частицы
+    for (let p of particles) {
+      ctx.save(); ctx.globalAlpha = p.life;
+      ctx.fillStyle = p.color;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+    }
+    // Выделение
+    if (selectedTile && !animations.length) {
+      const { row, col } = selectedTile;
+      ctx.strokeStyle = '#FFD700';
+      ctx.lineWidth = 4;
+      ctx.shadowColor = '#FFD700';
+      ctx.shadowBlur = 8;
+      ctx.strokeRect(col * TILE_SIZE + 2, row * TILE_SIZE + 2, TILE_SIZE - 4, TILE_SIZE - 4);
+      ctx.shadowBlur = 0; // сброс
+    }
+    // Индикатор бомбы
+    if (activeBooster === 'bomb') {
+      const t = performance.now() / 300;
+      ctx.save(); ctx.strokeStyle = '#ff6600'; ctx.lineWidth = 2;
+      ctx.globalAlpha = 0.3 + Math.sin(t)*0.1;
+      ctx.beginPath(); ctx.arc(canvas.width/2, canvas.height/2, 55 + Math.sin(t)*4, 0, 2*Math.PI); ctx.stroke();
+      ctx.beginPath(); ctx.arc(canvas.width/2, canvas.height/2, 65 + Math.cos(t)*4, 0, 2*Math.PI); ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  // ----- ИГРОВАЯ МЕХАНИКА -----
+  function fillBoardRandom() {
+    board = getEmptyBoard();
+    for (let r=0; r<ROWS; r++) for (let c=0; c<COLS; c++) board[r][c] = randomTile();
+    removeAllMatches(true);
+  }
+
+  function findMatches() {
+    const matches = Array(ROWS).fill().map(() => Array(COLS).fill(false));
+    let found = false;
+    for (let r=0; r<ROWS; r++) {
+      for (let c=0; c<COLS-2; c++) {
+        if (board[r][c] === EMPTY) continue;
+        let len = 1;
+        while(c+len<COLS && board[r][c+len] === board[r][c]) len++;
+        if (len>=3) { for (let i=0; i<len; i++) matches[r][c+i]=true; found=true; }
+        c+=len-1;
+      }
+    }
+    for (let c=0; c<COLS; c++) {
+      for (let r=0; r<ROWS-2; r++) {
+        if (board[r][c] === EMPTY) continue;
+        let len=1;
+        while(r+len<ROWS && board[r+len][c] === board[r][c]) len++;
+        if (len>=3) { for (let i=0; i<len; i++) matches[r+i][c]=true; found=true; }
+        r+=len-1;
+      }
+    }
+    return {matches, found};
+  }
+
+  function applyGravityInstant() {
+    for (let c=0; c<COLS; c++) {
+      let wp=ROWS-1;
+      for (let r=ROWS-1; r>=0; r--) if (board[r][c]!==EMPTY) board[wp--][c]=board[r][c];
+      while(wp>=0) board[wp--][c]=randomTile();
+    }
+  }
+
+  function removeAllMatches(silent=false) {
+    let total=0;
+    while(true) {
+      const {matches, found} = findMatches();
+      if (!found) break;
+      for (let r=0; r<ROWS; r++) for (let c=0; c<COLS; c++) if(matches[r][c]) { board[r][c]=EMPTY; total++; }
+      applyGravityInstant();
+    }
+    if (!silent) addXP(total*10);
+    return total;
+  }
+
+  function removeAndGravity() {
+    const {matches, found} = findMatches();
+    if (!found) { animationInProgress=false; updateUI(); drawScene(); return; }
+    const removedTiles = [];
+    for (let r=0; r<ROWS; r++) for (let c=0; c<COLS; c++) if(matches[r][c]) removedTiles.push({r,c,tile:board[r][c]});
+    let count=0;
+    for (let {r,c} of removedTiles) { if(board[r][c]!==EMPTY) { board[r][c]=EMPTY; count++; } }
+    addXP(count*10);
+    gold += Math.floor(count/3)*5; // 5 золота за каждые 3 удалённых
+    updateUI();
+    for (let {r,c,tile} of removedTiles) { addRemoveAnimation(r,c,tile); spawnParticles(r,c,tile); }
+    runAnimationThen(() => applyGravityAnimated(() => removeAndGravity()));
+  }
+
+  function applyGravityAnimated(callback) {
+    const moves = [];
+    const newTiles = [];
+    for (let c=0; c<COLS; c++) {
+      let wp=ROWS-1;
+      for (let r=ROWS-1; r>=0; r--) {
+        if (board[r][c]!==EMPTY) {
+          if (r!==wp) { moves.push({rFrom:r, c, rTo:wp, tile:board[r][c]}); board[r][c]=EMPTY; }
+          wp--;
         }
       }
-      else if (activeBooster === 'bomb') {
-        // взрываем 3x3 вокруг клетки
-        let used = false;
-        for (let dr=-1; dr<=1; dr++) {
-          for (let dc=-1; dc<=1; dc++) {
-            const r=row+dr, c=col+dc;
-            if (r>=0 && r<ROWS && c>=0 && c<COLS && board[r][c]!==EMPTY) {
-              board[r][c]=EMPTY;
-              used = true;
-            }
-          }
-        }
-        if (used) {
-          boosters.bomb--;
-          applyGravity();
-          removeAllMatches();
-          activeBooster = null;
-          updateBoosterButtons();
-          drawBoard();
-          return true;
+      for (let r=wp; r>=0; r--) {
+        const nt = randomTile();
+        board[r][c]=nt;
+        newTiles.push({r,c,tile:nt});
+      }
+    }
+    if (!moves.length && !newTiles.length) return callback();
+    moves.forEach(m => addMoveAnimation(m.rFrom, m.c, m.rTo, m.c, m.tile, 150));
+    newTiles.forEach(t => addAppearAnimation(t.r, t.c, t.tile, 200));
+    runAnimationThen(callback);
+  }
+
+  function trySwap(r1,c1,r2,c2) {
+    const t1=board[r1][c1], t2=board[r2][c2];
+    board[r1][c1]=EMPTY; board[r2][c2]=EMPTY;
+    addMoveAnimation(r1,c1,r2,c2,t1,180); addMoveAnimation(r2,c2,r1,c1,t2,180);
+    runAnimationThen(() => {
+      if (!findMatches().found) {
+        board[r2][c2]=EMPTY; board[r1][c1]=EMPTY;
+        addMoveAnimation(r2,c2,r1,c1,t1,150); addMoveAnimation(r1,c1,r2,c2,t2,150);
+        runAnimationThen(()=>{ animationInProgress=false; updateUI(); drawScene(); });
+      } else removeAndGravity();
+    });
+  }
+
+  function handleTileClick(row,col) {
+    if (animationInProgress || (board[row][col]===EMPTY && activeBooster!=='bomb')) return;
+    if (activeBooster) { if(useBooster(row,col)) updateUI(); return; }
+    if (selectedTile) {
+      const {row:sr, col:sc}=selectedTile;
+      if (sr===row && sc===col) { selectedTile=null; drawScene(); return; }
+      if (Math.abs(sr-row)+Math.abs(sc-col)===1) {
+        selectedTile=null; animationInProgress=true; trySwap(sr,sc,row,col);
+      } else { selectedTile={row,col}; drawScene(); }
+    } else { selectedTile={row,col}; drawScene(); }
+  }
+
+  // Бустеры
+  function useBooster(row,col) {
+    if (!activeBooster || boosters[activeBooster]<=0) return false;
+    const type=activeBooster;
+    if (type==='hammer' && board[row][col]!==EMPTY) {
+      const tile=board[row][col]; board[row][col]=EMPTY;
+      boosters.hammer--; spawnParticles(row,col,tile);
+      deactivateBooster(); applyGravityAnimated(()=>removeAndGravity());
+      return true;
+    }
+    if (type==='bomb') {
+      const affected=[];
+      for (let dr=-1; dr<=1; dr++) for (let dc=-1; dc<=1; dc++) {
+        const r=row+dr, c=col+dc;
+        if (r>=0 && r<ROWS && c>=0 && c<COLS && board[r][c]!==EMPTY) {
+          affected.push({r,c,tile:board[r][c]}); board[r][c]=EMPTY;
         }
       }
-      else if (activeBooster === 'shuffle') {
-        // собираем все фишки в массив, перемешиваем, раскладываем
-        let tiles = [];
-        for (let r=0; r<ROWS; r++) for (let c=0; c<COLS; c++) if(board[r][c]!==EMPTY) tiles.push(board[r][c]);
-        tiles.sort(()=>Math.random()-0.5);
-        let idx=0;
-        for (let r=0; r<ROWS; r++) for (let c=0; c<COLS; c++) if(board[r][c]!==EMPTY) board[r][c]=tiles[idx++];
-        boosters.shuffle--;
-        // после перемешивания убираем случайные совпадения
-        removeAllMatches(true);
-        activeBooster = null;
-        updateBoosterButtons();
-        drawBoard();
+      if (affected.length) {
+        boosters.bomb--;
+        affected.forEach(a=>spawnParticles(a.r,a.c,a.tile));
+        deactivateBooster(); applyGravityAnimated(()=>removeAndGravity());
         return true;
       }
-      return false;
     }
-
-    // ---------- обработка тапов ----------
-    function handleTileClick(row, col) {
-      if (animationInProgress) return;
-      if (board[row][col] === EMPTY && activeBooster !== 'bomb') return;
-
-      if (activeBooster) {
-        if (useBooster(row, col)) {
-          updateUI();
-          return;
-        }
-        // если бустер не сработал (например, молоток по пустой), ничего не делаем
-        return;
-      }
-
-      // обычный своп
-      if (selectedTile) {
-        const {row:sr, col:sc} = selectedTile;
-        if (sr===row && sc===col) { selectedTile=null; drawBoard(); return; }
-        if (Math.abs(sr-row)+Math.abs(sc-col)===1) {
-          animationInProgress=true;
-          swapTiles(sr,sc,row,col);
-          const {found} = findMatches();
-          if (!found) {
-            swapTiles(sr,sc,row,col);
-            animationInProgress=false;
-            selectedTile=null;
-            drawBoard();
-            return;
-          }
-          removeAllMatches();
-          selectedTile=null;
-          drawBoard();
-          animationInProgress=false;
-        } else {
-          selectedTile={row,col};
-          drawBoard();
-        }
-      } else {
-        selectedTile={row,col};
-        drawBoard();
-      }
+    if (type==='shuffle') {
+      const tiles = [];
+      for (let r=0; r<ROWS; r++) for (let c=0; c<COLS; c++) if(board[r][c]!==EMPTY) tiles.push(board[r][c]);
+      tiles.sort(()=>Math.random()-0.5);
+      let idx=0;
+      for (let r=0; r<ROWS; r++) for (let c=0; c<COLS; c++) if(board[r][c]!==EMPTY) board[r][c]=tiles[idx++];
+      boosters.shuffle--;
+      deactivateBooster(); removeAndGravity();
+      return true;
     }
+    return false;
+  }
 
-    function swapTiles(r1,c1,r2,c2) {
-      const t=board[r1][c1]; board[r1][c1]=board[r2][c2]; board[r2][c2]=t;
+  function deactivateBooster() { activeBooster=null; updateBoosterButtons(); }
+  function activateBooster(type) {
+    if (boosters[type]<=0) return;
+    activeBooster = activeBooster===type ? null : type;
+    selectedTile=null; updateBoosterButtons(); drawScene();
+  }
+  function updateBoosterButtons() {
+    boosterBtns.forEach(b=>b.classList.toggle('active-booster', b.dataset.type===activeBooster));
+  }
+
+  function addXP(amount) {
+    xp+=amount;
+    while (xp>=xpToNext) {
+      xp-=xpToNext;
+      level++;
+      updateDifficulty(); // обновим требования и фрукты после повышения
+      gold+=30;
+      // Бонусное золото за каждый третий уровень
+      if (level%3===0) gold+=50;
     }
+  }
 
-    // ---------- отрисовка ----------
-    function drawBoard() {
-      ctx.clearRect(0,0,canvas.width,canvas.height);
-      for (let r=0; r<ROWS; r++) {
-        for (let c=0; c<COLS; c++) {
-          const tile=board[r][c];
-          if (tile===EMPTY) continue;
-          ctx.fillStyle=COLORS[tile];
-          ctx.beginPath();
-          ctx.roundRect(c*TILE_SIZE+2, r*TILE_SIZE+2, TILE_SIZE-4, TILE_SIZE-4, 8);
-          ctx.fill();
-          if (selectedTile && selectedTile.row===r && selectedTile.col===c && !activeBooster) {
-            ctx.strokeStyle='white'; ctx.lineWidth=3; ctx.stroke();
-          }
-          // если активен бустер, подсвечиваем клетку под курсором? (опционально)
-        }
-      }
+  function updateUI() {
+    levelDisplay.textContent=`Ур. ${level}`;
+    xpDisplay.textContent=`${xp}/${xpToNext} XP`;
+    levelFill.style.width=`${(xp/xpToNext)*100}%`;
+    goldSpan.textContent=gold;
+    document.querySelector('[data-type="hammer"] .booster-count').textContent=boosters.hammer;
+    document.querySelector('[data-type="bomb"] .booster-count').textContent=boosters.bomb;
+    document.querySelector('[data-type="shuffle"] .booster-count').textContent=boosters.shuffle;
+  }
+
+  // Магазин
+  function buyItem(item) {
+    const prices = { hammer:20, bomb:50, shuffle:30 };
+    if (gold>=prices[item]) { gold-=prices[item]; boosters[item]++; updateUI(); }
+    else alert('Недостаточно золота!');
+  }
+  function buyGold() { gold+=100; updateUI(); alert('Тестовое начисление 100 золота!'); }
+
+  function newGame() {
+    board=getEmptyBoard();
+    level=1; xp=0; updateDifficulty(); // установит xpToNext и activeFruitCount
+    gold=100;
+    boosters.hammer=1; boosters.bomb=1; boosters.shuffle=1;
+    selectedTile=null; activeBooster=null;
+    animations=[]; particles=[]; pendingAction=null; animationInProgress=false;
+    stopLoop();
+    fillBoardRandom();
+    updateUI();
+    updateBoosterButtons();
+    drawScene();
+  }
+
+  // События
+  canvas.addEventListener('click', e => {
+    const rect=canvas.getBoundingClientRect();
+    const sx=canvas.width/rect.width, sy=canvas.height/rect.height;
+    const col=Math.floor((e.clientX-rect.left)*sx/TILE_SIZE);
+    const row=Math.floor((e.clientY-rect.top)*sy/TILE_SIZE);
+    if (row>=0 && row<ROWS && col>=0 && col<COLS) handleTileClick(row,col);
+  });
+  canvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    const t=e.touches[0];
+    const rect=canvas.getBoundingClientRect();
+    const sx=canvas.width/rect.width, sy=canvas.height/rect.height;
+    const col=Math.floor((t.clientX-rect.left)*sx/TILE_SIZE);
+    const row=Math.floor((t.clientY-rect.top)*sy/TILE_SIZE);
+    if (row>=0 && row<ROWS && col>=0 && col<COLS) handleTileClick(row,col);
+  }, {passive:false});
+
+  boosterBtns.forEach(b=>b.addEventListener('click',()=>activateBooster(b.dataset.type)));
+  document.getElementById('shop-btn').addEventListener('click',()=>shopModal.style.display='flex');
+  document.getElementById('close-shop').addEventListener('click',()=>shopModal.style.display='none');
+  shopModal.addEventListener('click', e => {
+    if (e.target.classList.contains('buy-btn')) {
+      const item=e.target.dataset.item;
+      if (item) buyItem(item); else if (e.target.id==='buyGoldBtn') buyGold();
     }
+  });
 
-    // ---------- магазин ----------
-    function buyItem(item) {
-      const prices = { hammer: 5, bomb: 15, shuffle: 10 };
-      if (gold >= prices[item]) {
-        gold -= prices[item];
-        boosters[item]++;
-        updateUI();
-      } else {
-        alert('Недостаточно золота!');
-      }
-    }
-
-    // Заглушка для покупки золота (в реальности через Telegram Payments)
-    function buyGold() {
-      // Используем Telegram Web App API для открытия счета
-      if (window.Telegram && Telegram.WebApp) {
-        // В реальном приложении вы должны получить invoice_link от вашего бота
-        // и открыть его:
-        // Telegram.WebApp.openInvoice(invoice_url, callback);
-        // Пока для теста просто добавим золото
-        gold += 100;
-        updateUI();
-        alert('Тестовое начисление 100 золота! (в реальности – через Stars)');
-      } else {
-        // если не в Telegram, просто тест
-        gold += 100;
-        updateUI();
-      }
-    }
-
-    // ---------- инициализация ----------
-    function newGame() {
-      board=getEmptyBoard();
-      fillBoardRandom();
-      selectedTile=null;
-      level=1; xp=0; xpToNext=100;
-      gold=500; // стартовое для теста, потом можно 0
-      boosters.hammer=1; boosters.bomb=1; boosters.shuffle=1;
-      activeBooster=null;
-      updateUI();
-      drawBoard();
-      updateBoosterButtons();
-    }
-
-    // привязка событий
-    canvas.addEventListener('click', e=>{
-      const rect=canvas.getBoundingClientRect();
-      const scaleX=canvas.width/rect.width, scaleY=canvas.height/rect.height;
-      const x=(e.clientX-rect.left)*scaleX, y=(e.clientY-rect.top)*scaleY;
-      const col=Math.floor(x/TILE_SIZE), row=Math.floor(y/TILE_SIZE);
-      if(row>=0&&row<ROWS&&col>=0&&col<COLS) handleTileClick(row,col);
-    });
-    canvas.addEventListener('touchstart', e=>{
-      e.preventDefault();
-      const touch=e.touches[0];
-      const rect=canvas.getBoundingClientRect();
-      const scaleX=canvas.width/rect.width, scaleY=canvas.height/rect.height;
-      const x=(touch.clientX-rect.left)*scaleX, y=(touch.clientY-rect.top)*scaleY;
-      const col=Math.floor(x/TILE_SIZE), row=Math.floor(y/TILE_SIZE);
-      if(row>=0&&row<ROWS&&col>=0&&col<COLS) handleTileClick(row,col);
-    }, {passive:false});
-
-    document.getElementById('hammerBtn').addEventListener('click', ()=>activateBooster('hammer'));
-    document.getElementById('bombBtn').addEventListener('click', ()=>activateBooster('bomb'));
-    document.getElementById('shuffleBtn').addEventListener('click', ()=>activateBooster('shuffle'));
-
-    document.getElementById('shop-btn').addEventListener('click', ()=>{
-      document.getElementById('shop-modal').style.display='flex';
-    });
-    document.getElementById('close-shop').addEventListener('click', ()=>{
-      document.getElementById('shop-modal').style.display='none';
-    });
-    document.querySelectorAll('.buy-btn[data-item]').forEach(btn=>{
-      btn.addEventListener('click', ()=>{
-        const item=btn.dataset.item;
-        buyItem(item);
-      });
-    });
-    document.getElementById('buyGoldBtn').addEventListener('click', buyGold);
-
-    window.addEventListener('load', ()=>{
-      if (!ctx.roundRect) {
-        ctx.roundRect=function(x,y,w,h,r){
-          if(typeof r==='number') r={tl:r,tr:r,br:r,bl:r};
-          ctx.beginPath();
-          ctx.moveTo(x+r.tl,y);
-          ctx.lineTo(x+w-r.tr,y);
-          ctx.quadraticCurveTo(x+w,y,x+w,y+r.tr);
-          ctx.lineTo(x+w,y+h-r.br);
-          ctx.quadraticCurveTo(x+w,y+h,x+w-r.br,y+h);
-          ctx.lineTo(x+r.bl,y+h);
-          ctx.quadraticCurveTo(x,y+h,x,y+h-r.bl);
-          ctx.lineTo(x,y+r.tl);
-          ctx.quadraticCurveTo(x,y,x+r.tl,y);
-          ctx.closePath();
-        };
-      }
-      newGame();
-      if (window.Telegram && Telegram.WebApp) {
-        Telegram.WebApp.ready();
-        Telegram.WebApp.expand();
-      }
-    });
-  })();
+  if (window.Telegram?.WebApp) { Telegram.WebApp.ready(); Telegram.WebApp.expand(); }
+  newGame();
+})();
 </script>
 </body>
 </html>
