@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Match-3 Фрукты v2</title>
+  <title>Match-3 Камни</title>
   <style>
     body {
       margin: 0;
@@ -20,7 +20,7 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-      width: 320px;
+      width: 340px;
       margin-bottom: 8px;
     }
     #gold-display {
@@ -59,14 +59,14 @@
       border-radius: 12px;
       box-shadow: 0 0 20px rgba(0,0,0,0.5);
       touch-action: none;
-      background: #1b1b3a;
+      background: #22223b;
     }
     #info {
       margin-top: 8px;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      width: 320px;
+      width: 340px;
     }
     #level-bar {
       width: 200px;
@@ -126,6 +126,7 @@
   <div id="gold-display">🪙 <span id="goldAmount">0</span></div>
   <div id="boosters">
     <button class="booster-btn" data-type="hammer">🔨 <span class="booster-count">0</span></button>
+    <button class="booster-btn" data-type="cross">✚ <span class="booster-count">0</span></button>
     <button class="booster-btn" data-type="bomb">💣 <span class="booster-count">0</span></button>
     <button class="booster-btn" data-type="shuffle">🔀 <span class="booster-count">0</span></button>
   </div>
@@ -143,6 +144,7 @@
 <div id="shop-modal">
   <h3>Магазин</h3>
   <div class="shop-item"><span>🔨 Молоток (20 зол.)</span> <button class="buy-btn" data-item="hammer">Купить</button></div>
+  <div class="shop-item"><span>✚ Крест (40 зол.)</span> <button class="buy-btn" data-item="cross">Купить</button></div>
   <div class="shop-item"><span>💣 Бомба (50 зол.)</span> <button class="buy-btn" data-item="bomb">Купить</button></div>
   <div class="shop-item"><span>🔀 Перемешивание (30 зол.)</span> <button class="buy-btn" data-item="shuffle">Купить</button></div>
   <div class="shop-item"><span>🪙 100 золота</span> <button class="buy-btn" id="buyGoldBtn">⭐ Купить за Stars</button></div>
@@ -153,432 +155,314 @@
 (() => {
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
-  const ROWS = 8, COLS = 8, TILE_SIZE = 40;
-  // Базовый набор фруктов (первые 4 доступны сразу)
-  const ALL_FRUITS = ['🍎', '🍊', '🍋', '🍇', '🍓', '🍒'];
-  const FRUIT_COLORS = ['#ff4444', '#ff8c00', '#ffd700', '#8a2be2', '#ff69b4', '#ff0000'];
+  const ROWS = 8, COLS = 8, TILE = 40; // tile size
+  const GEMS = ['💎','🔷','🔶','🟢','🟣','🔴']; // 6 камней
   const EMPTY = -1;
 
-  // DOM
+  // DOM кэш
   const goldSpan = document.getElementById('goldAmount');
-  const levelDisplay = document.getElementById('levelDisplay');
-  const xpDisplay = document.getElementById('xpDisplay');
-  const levelFill = document.getElementById('level-fill');
+  const lvlDisp = document.getElementById('levelDisplay');
+  const xpDisp = document.getElementById('xpDisplay');
+  const lvlFill = document.getElementById('level-fill');
   const shopModal = document.getElementById('shop-modal');
   const boosterBtns = document.querySelectorAll('.booster-btn');
 
-  let board, selectedTile = null, level = 1, xp = 0, xpToNext = 100;
-  let animationInProgress = false, gold = 100;
-  const boosters = { hammer: 1, bomb: 1, shuffle: 1 };
-  let activeBooster = null;
-  let activeFruitCount = 4; // текущее количество видов фруктов
+  // Состояние
+  let board, sel = null, lvl = 1, xp = 0, xpNext = 100, busy = false, gold = 100;
+  const boost = { hammer:1, cross:1, bomb:1, shuffle:1 };
+  let activeB = null;
+  let activeGemCount = 4; // начальные виды камней
 
   // Анимации
-  let animations = [];
-  let particles = [];
-  let gameLoopId = null;
-  let pendingAction = null;
-  let lastTime = 0;
+  let anims = [], particles = [], loopId = null, pending = null, lastT = 0;
 
-  function getEmptyBoard() { return Array(ROWS).fill().map(() => Array(COLS).fill(EMPTY)); }
-  function randomTile() { return Math.floor(Math.random() * activeFruitCount); }
+  function emptyBoard() { return Array(ROWS).fill().map(()=>Array(COLS).fill(EMPTY)); }
+  function randGem() { return Math.floor(Math.random() * activeGemCount); }
 
-  // Обновление сложности по уровню
   function updateDifficulty() {
-    // Новый фрукт каждые 3 уровня, начиная с 4-го (максимум 6)
-    activeFruitCount = Math.min(4 + Math.floor((level - 1) / 3), ALL_FRUITS.length);
-    // Увеличение требований к опыту: базовый рост *1.5, плюс каждые 3 уровня +20%
-    xpToNext = 100;
-    for (let i = 1; i < level; i++) {
-      xpToNext = Math.floor(xpToNext * 1.5);
-      if (i % 3 === 0) xpToNext = Math.floor(xpToNext * 1.2);
+    activeGemCount = Math.min(4 + Math.floor((lvl-1)/3), GEMS.length);
+    xpNext = 100;
+    for (let i=1; i<lvl; i++) {
+      xpNext = Math.floor(xpNext * 1.5);
+      if (i%3===0) xpNext = Math.floor(xpNext * 1.2);
     }
   }
 
-  // Анимационные хелперы
-  function addMoveAnimation(rFrom, cFrom, rTo, cTo, tile, dur = 200) {
-    animations.push({ type: 'move', rFrom, cFrom, rTo, cTo, tile, progress: 0, duration: dur, startTime: performance.now() });
-  }
-  function addRemoveAnimation(r, c, tile, dur = 300) {
-    animations.push({ type: 'remove', r, c, tile, progress: 0, duration: dur, startTime: performance.now() });
-  }
-  function addAppearAnimation(r, c, tile, dur = 250) {
-    animations.push({ type: 'appear', r, c, tile, progress: 0, duration: dur, startTime: performance.now() });
-  }
-  function spawnParticles(row, col, fruitIndex) {
-    const cx = col * TILE_SIZE + TILE_SIZE/2;
-    const cy = row * TILE_SIZE + TILE_SIZE/2;
-    const color = FRUIT_COLORS[fruitIndex] || '#fff';
-    for (let i = 0; i < 8; i++) {
-      const angle = Math.random() * 2 * Math.PI;
-      const speed = 1 + Math.random() * 2.5;
-      particles.push({
-        x: cx, y: cy,
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed,
-        life: 1,
-        decay: 0.015 + Math.random() * 0.02,
-        size: 2 + Math.random() * 3,
-        color
-      });
+  // Анимации: move, remove, appear
+  function addMove(r1,c1,r2,c2,g,d=200) { anims.push({t:'move',r1,c1,r2,c2,g,p:0,d,st:performance.now()}); }
+  function addRem(r,c,g,d=280) { anims.push({t:'rem',r,c,g,p:0,d,st:performance.now()}); }
+  function addApp(r,c,g,d=220) { anims.push({t:'app',r,c,g,p:0,d,st:performance.now()}); }
+  function spawnParts(r,c,gi) {
+    const cx=c*TILE+20, cy=r*TILE+20, colors=['#ff0','#f0f','#0ff','#f00','#0f0','#00f'];
+    for(let i=0;i<6;i++) {
+      const a=Math.random()*6.28, s=0.8+Math.random()*2;
+      particles.push({x:cx,y:cy,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:1,decay:0.02+Math.random()*0.02,size:2+Math.random()*2,color:colors[gi%colors.length]});
     }
   }
 
-  function startLoopIfNeeded() {
-    if (!gameLoopId) { lastTime = performance.now(); gameLoopId = requestAnimationFrame(gameLoop); }
-  }
-  function stopLoop() { if (gameLoopId) { cancelAnimationFrame(gameLoopId); gameLoopId = null; } }
-  function runAnimationThen(callback) { animationInProgress = true; pendingAction = callback; startLoopIfNeeded(); }
+  function startLoop() { if(!loopId){lastT=performance.now(); loopId=requestAnimationFrame(gameLoop);} }
+  function stopLoop() { if(loopId){cancelAnimationFrame(loopId); loopId=null;} }
+  function runThen(cb) { busy=true; pending=cb; startLoop(); }
 
   function gameLoop(now) {
-    const dt = now - lastTime;
-    lastTime = now;
-    let allDone = true;
-    for (let a of animations) {
-      if (a.progress < 1) { allDone = false; a.progress = Math.min((now - a.startTime) / a.duration, 1); }
-    }
-    for (let p of particles) {
-      p.x += p.vx * dt * 0.06;
-      p.y += p.vy * dt * 0.06;
-      p.life -= p.decay * dt * 0.06;
-    }
-    particles = particles.filter(p => p.life > 0);
+    const dt=now-lastT; lastT=now;
+    let done=true;
+    for(let a of anims) if(a.p<1) { done=false; a.p=Math.min((now-a.st)/a.d,1); }
+    for(let p of particles) { p.x+=p.vx*dt*0.06; p.y+=p.vy*dt*0.06; p.life-=p.decay*dt*0.06; }
+    particles=particles.filter(p=>p.life>0);
     drawScene();
-    if (!allDone || particles.length > 0) gameLoopId = requestAnimationFrame(gameLoop);
-    else finishAnimations();
+    if(!done||particles.length>0) loopId=requestAnimationFrame(gameLoop);
+    else finishAnims();
   }
 
-  function finishAnimations() {
-    const moves = animations.filter(a => a.type === 'move');
-    for (let m of moves) {
-      if (board[m.rFrom][m.cFrom] === m.tile) board[m.rFrom][m.cFrom] = EMPTY;
-      board[m.rTo][m.cTo] = m.tile;
-    }
-    animations = [];
+  function finishAnims() {
+    const moves=anims.filter(a=>a.t==='move');
+    for(let m of moves) { board[m.r2][m.c2]=m.g; if(board[m.r1][m.c1]===m.g) board[m.r1][m.c1]=EMPTY; }
+    anims=[];
     stopLoop();
-    if (pendingAction) { const act = pendingAction; pendingAction = null; act(); }
-    else { animationInProgress = false; updateUI(); drawScene(); }
+    if(pending) { const p=pending; pending=null; p(); }
+    else { busy=false; updateUI(); drawScene(); }
   }
 
-  // ----- ОТРИСОВКА -----
-  function drawTileBackground(x, y) {
-    ctx.fillStyle = 'rgba(255,255,255,0.12)';
-    ctx.fillRect(x + 2, y + 2, TILE_SIZE - 4, TILE_SIZE - 4);
-    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(x + 2.5, y + 2.5, TILE_SIZE - 5, TILE_SIZE - 5);
-  }
-
-  function drawFruit(x, y, tile, scale = 1, alpha = 1) {
+  // --- Отрисовка ---
+  function drawStone(x,y,gem,scale=1,alpha=1) {
     ctx.save();
-    ctx.globalAlpha = alpha;
-    ctx.translate(x + TILE_SIZE/2, y + TILE_SIZE/2);
-    ctx.scale(scale, scale);
-    drawTileBackground(-TILE_SIZE/2, -TILE_SIZE/2);
-    // Тень под эмодзи
-    ctx.shadowColor = 'rgba(0,0,0,0.5)';
-    ctx.shadowBlur = 4;
-    ctx.font = '32px "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(ALL_FRUITS[tile], 0, 2);
+    ctx.globalAlpha=alpha;
+    ctx.translate(x+20,y+20);
+    ctx.scale(scale,scale);
+    ctx.font='28px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(GEMS[gem],0,1);
     ctx.restore();
   }
 
   function drawScene() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    for (let r = 0; r < ROWS; r++) {
-      for (let c = 0; c < COLS; c++) {
-        if (board[r][c] === EMPTY) continue;
-        let skip = animations.some(a =>
-          (a.type === 'move' && a.rFrom === r && a.cFrom === c && a.progress < 1) ||
-          (a.type === 'appear' && a.r === r && a.c === c && a.progress < 1)
-        );
-        if (!skip) drawFruit(c * TILE_SIZE, r * TILE_SIZE, board[r][c]);
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++) {
+      if(board[r][c]===EMPTY) continue;
+      let skip=anims.some(a=>(a.t==='move'&&a.r1===r&&a.c1===c&&a.p<1)||(a.t==='app'&&a.r===r&&a.c===c&&a.p<1));
+      if(!skip) drawStone(c*TILE,r*TILE,board[r][c]);
+    }
+    for(let a of anims) {
+      if(a.t==='move') {
+        const fx=a.c1*TILE+20, fy=a.r1*TILE+20, tx=a.c2*TILE+20, ty=a.r2*TILE+20;
+        const cx=fx+(tx-fx)*a.p, cy=fy+(ty-fy)*a.p;
+        drawStone(cx-20,cy-20,a.g);
+      } else if(a.t==='rem') {
+        drawStone(a.c*TILE,a.r*TILE,a.g,1+a.p*0.3,1-a.p);
+      } else if(a.t==='app') {
+        drawStone(a.c*TILE,a.r*TILE,a.g,a.p);
       }
     }
-    // Анимируемые фрукты
-    for (let a of animations) {
-      if (a.type === 'move') {
-        const fromX = a.cFrom * TILE_SIZE + TILE_SIZE/2;
-        const fromY = a.rFrom * TILE_SIZE + TILE_SIZE/2;
-        const toX = a.cTo * TILE_SIZE + TILE_SIZE/2;
-        const toY = a.rTo * TILE_SIZE + TILE_SIZE/2;
-        const curX = fromX + (toX - fromX) * a.progress;
-        const curY = fromY + (toY - fromY) * a.progress;
-        drawFruit(curX - TILE_SIZE/2, curY - TILE_SIZE/2, a.tile);
-      } else if (a.type === 'remove') {
-        const scale = 1 + a.progress * 0.4;
-        const alpha = 1 - a.progress;
-        drawFruit(a.c * TILE_SIZE, a.r * TILE_SIZE, a.tile, scale, alpha);
-      } else if (a.type === 'appear') {
-        const scale = Math.min(a.progress * 1.2, 1);
-        const alpha = a.progress;
-        drawFruit(a.c * TILE_SIZE, a.r * TILE_SIZE, a.tile, scale, alpha);
-      }
+    for(let p of particles) {
+      ctx.save(); ctx.globalAlpha=p.life; ctx.fillStyle=p.color;
+      ctx.beginPath(); ctx.arc(p.x,p.y,p.size*p.life,0,6.28); ctx.fill(); ctx.restore();
     }
-    // Частицы
-    for (let p of particles) {
-      ctx.save(); ctx.globalAlpha = p.life;
-      ctx.fillStyle = p.color;
-      ctx.beginPath(); ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI*2); ctx.fill();
-      ctx.restore();
-    }
-    // Выделение
-    if (selectedTile && !animations.length) {
-      const { row, col } = selectedTile;
-      ctx.strokeStyle = '#FFD700';
-      ctx.lineWidth = 4;
-      ctx.shadowColor = '#FFD700';
-      ctx.shadowBlur = 8;
-      ctx.strokeRect(col * TILE_SIZE + 2, row * TILE_SIZE + 2, TILE_SIZE - 4, TILE_SIZE - 4);
-      ctx.shadowBlur = 0; // сброс
-    }
-    // Индикатор бомбы
-    if (activeBooster === 'bomb') {
-      const t = performance.now() / 300;
-      ctx.save(); ctx.strokeStyle = '#ff6600'; ctx.lineWidth = 2;
-      ctx.globalAlpha = 0.3 + Math.sin(t)*0.1;
-      ctx.beginPath(); ctx.arc(canvas.width/2, canvas.height/2, 55 + Math.sin(t)*4, 0, 2*Math.PI); ctx.stroke();
-      ctx.beginPath(); ctx.arc(canvas.width/2, canvas.height/2, 65 + Math.cos(t)*4, 0, 2*Math.PI); ctx.stroke();
-      ctx.restore();
+    if(sel && anims.length===0) {
+      ctx.strokeStyle='#FFD700'; ctx.lineWidth=4;
+      ctx.strokeRect(sel.c*TILE+2,sel.r*TILE+2,TILE-4,TILE-4);
     }
   }
 
-  // ----- ИГРОВАЯ МЕХАНИКА -----
-  function fillBoardRandom() {
-    board = getEmptyBoard();
-    for (let r=0; r<ROWS; r++) for (let c=0; c<COLS; c++) board[r][c] = randomTile();
+  // --- Логика ---
+  function fillBoard() {
+    board=emptyBoard();
+    for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++) board[r][c]=randGem();
     removeAllMatches(true);
   }
 
   function findMatches() {
-    const matches = Array(ROWS).fill().map(() => Array(COLS).fill(false));
-    let found = false;
-    for (let r=0; r<ROWS; r++) {
-      for (let c=0; c<COLS-2; c++) {
-        if (board[r][c] === EMPTY) continue;
-        let len = 1;
-        while(c+len<COLS && board[r][c+len] === board[r][c]) len++;
-        if (len>=3) { for (let i=0; i<len; i++) matches[r][c+i]=true; found=true; }
-        c+=len-1;
-      }
-    }
-    for (let c=0; c<COLS; c++) {
-      for (let r=0; r<ROWS-2; r++) {
-        if (board[r][c] === EMPTY) continue;
+    const m=Array(ROWS).fill().map(()=>Array(COLS).fill(false));
+    let f=false;
+    for(let r=0;r<ROWS;r++) {
+      for(let c=0;c<COLS-2;c++) {
+        if(board[r][c]===EMPTY) continue;
         let len=1;
-        while(r+len<ROWS && board[r+len][c] === board[r][c]) len++;
-        if (len>=3) { for (let i=0; i<len; i++) matches[r+i][c]=true; found=true; }
-        r+=len-1;
+        while(c+len<COLS && board[r][c+len]===board[r][c]) len++;
+        if(len>=3) { for(let i=0;i<len;i++) m[r][c+i]=true; f=true; c+=len-1; }
       }
     }
-    return {matches, found};
+    for(let c=0;c<COLS;c++) {
+      for(let r=0;r<ROWS-2;r++) {
+        if(board[r][c]===EMPTY) continue;
+        let len=1;
+        while(r+len<ROWS && board[r+len][c]===board[r][c]) len++;
+        if(len>=3) { for(let i=0;i<len;i++) m[r+i][c]=true; f=true; r+=len-1; }
+      }
+    }
+    return {m,f};
   }
 
-  function applyGravityInstant() {
-    for (let c=0; c<COLS; c++) {
-      let wp=ROWS-1;
-      for (let r=ROWS-1; r>=0; r--) if (board[r][c]!==EMPTY) board[wp--][c]=board[r][c];
-      while(wp>=0) board[wp--][c]=randomTile();
+  function gravInstant() {
+    for(let c=0;c<COLS;c++) {
+      let w=ROWS-1;
+      for(let r=ROWS-1;r>=0;r--) if(board[r][c]!==EMPTY) board[w--][c]=board[r][c];
+      while(w>=0) board[w--][c]=randGem();
     }
   }
 
-  function removeAllMatches(silent=false) {
+  function removeAllMatches(sil=false) {
     let total=0;
     while(true) {
-      const {matches, found} = findMatches();
-      if (!found) break;
-      for (let r=0; r<ROWS; r++) for (let c=0; c<COLS; c++) if(matches[r][c]) { board[r][c]=EMPTY; total++; }
-      applyGravityInstant();
+      const {m,f}=findMatches();
+      if(!f) break;
+      for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++) if(m[r][c]) { board[r][c]=EMPTY; total++; }
+      gravInstant();
     }
-    if (!silent) addXP(total*10);
+    if(!sil) addXP(total*10);
     return total;
   }
 
   function removeAndGravity() {
-    const {matches, found} = findMatches();
-    if (!found) { animationInProgress=false; updateUI(); drawScene(); return; }
-    const removedTiles = [];
-    for (let r=0; r<ROWS; r++) for (let c=0; c<COLS; c++) if(matches[r][c]) removedTiles.push({r,c,tile:board[r][c]});
-    let count=0;
-    for (let {r,c} of removedTiles) { if(board[r][c]!==EMPTY) { board[r][c]=EMPTY; count++; } }
-    addXP(count*10);
-    gold += Math.floor(count/3)*5; // 5 золота за каждые 3 удалённых
+    const {m,f}=findMatches();
+    if(!f) { busy=false; updateUI(); drawScene(); return; }
+    const rem=[];
+    for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++) if(m[r][c]) rem.push({r,c,g:board[r][c]});
+    let cnt=0;
+    for(let {r,c} of rem) { board[r][c]=EMPTY; cnt++; }
+    addXP(cnt*10);
+    gold+=Math.floor(cnt/3)*5;
     updateUI();
-    for (let {r,c,tile} of removedTiles) { addRemoveAnimation(r,c,tile); spawnParticles(r,c,tile); }
-    runAnimationThen(() => applyGravityAnimated(() => removeAndGravity()));
+    rem.forEach(({r,c,g})=>{ addRem(r,c,g); spawnParts(r,c,g); });
+    runThen(()=>applyGravityAnimated(()=>removeAndGravity()));
   }
 
-  function applyGravityAnimated(callback) {
-    const moves = [];
-    const newTiles = [];
-    for (let c=0; c<COLS; c++) {
-      let wp=ROWS-1;
-      for (let r=ROWS-1; r>=0; r--) {
-        if (board[r][c]!==EMPTY) {
-          if (r!==wp) { moves.push({rFrom:r, c, rTo:wp, tile:board[r][c]}); board[r][c]=EMPTY; }
-          wp--;
+  function applyGravityAnimated(cb) {
+    const moves=[], news=[];
+    for(let c=0;c<COLS;c++) {
+      let w=ROWS-1;
+      for(let r=ROWS-1;r>=0;r--) {
+        if(board[r][c]!==EMPTY) {
+          if(r!==w) { moves.push({r1:r,c1:c,r2:w,c2:c,g:board[r][c]}); board[r][c]=EMPTY; }
+          w--;
         }
       }
-      for (let r=wp; r>=0; r--) {
-        const nt = randomTile();
-        board[r][c]=nt;
-        newTiles.push({r,c,tile:nt});
-      }
+      for(let r=w;r>=0;r--) { const ng=randGem(); board[r][c]=ng; news.push({r,c,g:ng}); }
     }
-    if (!moves.length && !newTiles.length) return callback();
-    moves.forEach(m => addMoveAnimation(m.rFrom, m.c, m.rTo, m.c, m.tile, 150));
-    newTiles.forEach(t => addAppearAnimation(t.r, t.c, t.tile, 200));
-    runAnimationThen(callback);
+    if(!moves.length&&!news.length) return cb();
+    moves.forEach(m=>addMove(m.r1,m.c1,m.r2,m.c2,m.g,150));
+    news.forEach(t=>addApp(t.r,t.c,t.g,200));
+    runThen(cb);
   }
 
   function trySwap(r1,c1,r2,c2) {
-    const t1=board[r1][c1], t2=board[r2][c2];
+    const g1=board[r1][c1], g2=board[r2][c2];
     board[r1][c1]=EMPTY; board[r2][c2]=EMPTY;
-    addMoveAnimation(r1,c1,r2,c2,t1,180); addMoveAnimation(r2,c2,r1,c1,t2,180);
-    runAnimationThen(() => {
-      if (!findMatches().found) {
+    addMove(r1,c1,r2,c2,g1,180); addMove(r2,c2,r1,c1,g2,180);
+    runThen(()=>{
+      if(!findMatches().f) {
         board[r2][c2]=EMPTY; board[r1][c1]=EMPTY;
-        addMoveAnimation(r2,c2,r1,c1,t1,150); addMoveAnimation(r1,c1,r2,c2,t2,150);
-        runAnimationThen(()=>{ animationInProgress=false; updateUI(); drawScene(); });
+        addMove(r2,c2,r1,c1,g1,150); addMove(r1,c1,r2,c2,g2,150);
+        runThen(()=>{ busy=false; updateUI(); drawScene(); });
       } else removeAndGravity();
     });
   }
 
-  function handleTileClick(row,col) {
-    if (animationInProgress || (board[row][col]===EMPTY && activeBooster!=='bomb')) return;
-    if (activeBooster) { if(useBooster(row,col)) updateUI(); return; }
-    if (selectedTile) {
-      const {row:sr, col:sc}=selectedTile;
-      if (sr===row && sc===col) { selectedTile=null; drawScene(); return; }
-      if (Math.abs(sr-row)+Math.abs(sc-col)===1) {
-        selectedTile=null; animationInProgress=true; trySwap(sr,sc,row,col);
-      } else { selectedTile={row,col}; drawScene(); }
-    } else { selectedTile={row,col}; drawScene(); }
+  function handleClick(row,col) {
+    if(busy||(board[row][col]===EMPTY && activeB!=='bomb'&&activeB!=='cross')) return;
+    if(activeB) { if(useBooster(row,col)) updateUI(); return; }
+    if(sel) {
+      const {row:sr, col:sc}=sel;
+      if(sr===row&&sc===col) { sel=null; drawScene(); return; }
+      if(Math.abs(sr-row)+Math.abs(sc-col)===1) { sel=null; busy=true; trySwap(sr,sc,row,col); }
+      else { sel={row,col}; drawScene(); }
+    } else { sel={row,col}; drawScene(); }
   }
 
-  // Бустеры
   function useBooster(row,col) {
-    if (!activeBooster || boosters[activeBooster]<=0) return false;
-    const type=activeBooster;
-    if (type==='hammer' && board[row][col]!==EMPTY) {
-      const tile=board[row][col]; board[row][col]=EMPTY;
-      boosters.hammer--; spawnParticles(row,col,tile);
-      deactivateBooster(); applyGravityAnimated(()=>removeAndGravity());
-      return true;
+    if(!activeB||boost[activeB]<=0) return false;
+    if(activeB==='hammer' && board[row][col]!==EMPTY) {
+      board[row][col]=EMPTY; boost.hammer--; deactB(); applyGravityAnimated(()=>removeAndGravity()); return true;
     }
-    if (type==='bomb') {
-      const affected=[];
-      for (let dr=-1; dr<=1; dr++) for (let dc=-1; dc<=1; dc++) {
+    if(activeB==='cross' && board[row][col]!==EMPTY) {
+      const aff=[];
+      for(let r=0;r<ROWS;r++) if(board[r][col]!==EMPTY) { aff.push({r,c:col,g:board[r][col]}); board[r][col]=EMPTY; }
+      for(let c=0;c<COLS;c++) if(board[row][c]!==EMPTY) { aff.push({r:row,c,g:board[row][c]}); board[row][c]=EMPTY; }
+      // убираем дубликат центра
+      if(aff.length) { boost.cross--; aff.forEach(a=>spawnParts(a.r,a.c,a.g)); deactB(); applyGravityAnimated(()=>removeAndGravity()); return true; }
+    }
+    if(activeB==='bomb') {
+      const aff=[];
+      for(let dr=-1;dr<=1;dr++) for(let dc=-1;dc<=1;dc++) {
         const r=row+dr, c=col+dc;
-        if (r>=0 && r<ROWS && c>=0 && c<COLS && board[r][c]!==EMPTY) {
-          affected.push({r,c,tile:board[r][c]}); board[r][c]=EMPTY;
-        }
+        if(r>=0&&r<ROWS&&c>=0&&c<COLS&&board[r][c]!==EMPTY) { aff.push({r,c,g:board[r][c]}); board[r][c]=EMPTY; }
       }
-      if (affected.length) {
-        boosters.bomb--;
-        affected.forEach(a=>spawnParticles(a.r,a.c,a.tile));
-        deactivateBooster(); applyGravityAnimated(()=>removeAndGravity());
-        return true;
-      }
+      if(aff.length) { boost.bomb--; aff.forEach(a=>spawnParts(a.r,a.c,a.g)); deactB(); applyGravityAnimated(()=>removeAndGravity()); return true; }
     }
-    if (type==='shuffle') {
-      const tiles = [];
-      for (let r=0; r<ROWS; r++) for (let c=0; c<COLS; c++) if(board[r][c]!==EMPTY) tiles.push(board[r][c]);
+    if(activeB==='shuffle') {
+      const tiles=[];
+      for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++) if(board[r][c]!==EMPTY) tiles.push(board[r][c]);
       tiles.sort(()=>Math.random()-0.5);
       let idx=0;
-      for (let r=0; r<ROWS; r++) for (let c=0; c<COLS; c++) if(board[r][c]!==EMPTY) board[r][c]=tiles[idx++];
-      boosters.shuffle--;
-      deactivateBooster(); removeAndGravity();
-      return true;
+      for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++) if(board[r][c]!==EMPTY) board[r][c]=tiles[idx++];
+      boost.shuffle--; deactB(); removeAndGravity(); return true;
     }
     return false;
   }
 
-  function deactivateBooster() { activeBooster=null; updateBoosterButtons(); }
-  function activateBooster(type) {
-    if (boosters[type]<=0) return;
-    activeBooster = activeBooster===type ? null : type;
-    selectedTile=null; updateBoosterButtons(); drawScene();
-  }
-  function updateBoosterButtons() {
-    boosterBtns.forEach(b=>b.classList.toggle('active-booster', b.dataset.type===activeBooster));
-  }
+  function deactB() { activeB=null; updateBoosterBtns(); }
+  function actB(type) { if(boost[type]<=0) return; activeB=activeB===type?null:type; sel=null; updateBoosterBtns(); drawScene(); }
+  function updateBoosterBtns() { boosterBtns.forEach(b=>b.classList.toggle('active-booster',b.dataset.type===activeB)); }
 
   function addXP(amount) {
     xp+=amount;
-    while (xp>=xpToNext) {
-      xp-=xpToNext;
-      level++;
-      updateDifficulty(); // обновим требования и фрукты после повышения
-      gold+=30;
-      // Бонусное золото за каждый третий уровень
-      if (level%3===0) gold+=50;
-    }
+    while(xp>=xpNext) { xp-=xpNext; lvl++; updateDifficulty(); gold+=30; if(lvl%3===0) gold+=50; }
   }
 
   function updateUI() {
-    levelDisplay.textContent=`Ур. ${level}`;
-    xpDisplay.textContent=`${xp}/${xpToNext} XP`;
-    levelFill.style.width=`${(xp/xpToNext)*100}%`;
+    lvlDisp.textContent=`Ур. ${lvl}`;
+    xpDisp.textContent=`${xp}/${xpNext} XP`;
+    lvlFill.style.width=`${(xp/xpNext)*100}%`;
     goldSpan.textContent=gold;
-    document.querySelector('[data-type="hammer"] .booster-count').textContent=boosters.hammer;
-    document.querySelector('[data-type="bomb"] .booster-count').textContent=boosters.bomb;
-    document.querySelector('[data-type="shuffle"] .booster-count').textContent=boosters.shuffle;
+    document.querySelector('[data-type="hammer"] .booster-count').textContent=boost.hammer;
+    document.querySelector('[data-type="cross"] .booster-count').textContent=boost.cross;
+    document.querySelector('[data-type="bomb"] .booster-count').textContent=boost.bomb;
+    document.querySelector('[data-type="shuffle"] .booster-count').textContent=boost.shuffle;
   }
 
   // Магазин
   function buyItem(item) {
-    const prices = { hammer:20, bomb:50, shuffle:30 };
-    if (gold>=prices[item]) { gold-=prices[item]; boosters[item]++; updateUI(); }
+    const prices={hammer:20,cross:40,bomb:50,shuffle:30};
+    if(gold>=prices[item]) { gold-=prices[item]; boost[item]++; updateUI(); }
     else alert('Недостаточно золота!');
   }
   function buyGold() { gold+=100; updateUI(); alert('Тестовое начисление 100 золота!'); }
 
   function newGame() {
-    board=getEmptyBoard();
-    level=1; xp=0; updateDifficulty(); // установит xpToNext и activeFruitCount
-    gold=100;
-    boosters.hammer=1; boosters.bomb=1; boosters.shuffle=1;
-    selectedTile=null; activeBooster=null;
-    animations=[]; particles=[]; pendingAction=null; animationInProgress=false;
-    stopLoop();
-    fillBoardRandom();
-    updateUI();
-    updateBoosterButtons();
-    drawScene();
+    board=emptyBoard();
+    lvl=1; xp=0; updateDifficulty(); gold=100;
+    boost.hammer=1; boost.cross=1; boost.bomb=1; boost.shuffle=1;
+    sel=null; activeB=null; anims=[]; particles=[]; pending=null; busy=false;
+    stopLoop(); fillBoard(); updateUI(); updateBoosterBtns(); drawScene();
   }
 
   // События
-  canvas.addEventListener('click', e => {
-    const rect=canvas.getBoundingClientRect();
-    const sx=canvas.width/rect.width, sy=canvas.height/rect.height;
-    const col=Math.floor((e.clientX-rect.left)*sx/TILE_SIZE);
-    const row=Math.floor((e.clientY-rect.top)*sy/TILE_SIZE);
-    if (row>=0 && row<ROWS && col>=0 && col<COLS) handleTileClick(row,col);
+  canvas.addEventListener('click',e=>{
+    const r=canvas.getBoundingClientRect();
+    const sx=canvas.width/r.width, sy=canvas.height/r.height;
+    const col=Math.floor((e.clientX-r.left)*sx/TILE), row=Math.floor((e.clientY-r.top)*sy/TILE);
+    if(row>=0&&row<ROWS&&col>=0&&col<COLS) handleClick(row,col);
   });
-  canvas.addEventListener('touchstart', e => {
+  canvas.addEventListener('touchstart',e=>{
     e.preventDefault();
     const t=e.touches[0];
-    const rect=canvas.getBoundingClientRect();
-    const sx=canvas.width/rect.width, sy=canvas.height/rect.height;
-    const col=Math.floor((t.clientX-rect.left)*sx/TILE_SIZE);
-    const row=Math.floor((t.clientY-rect.top)*sy/TILE_SIZE);
-    if (row>=0 && row<ROWS && col>=0 && col<COLS) handleTileClick(row,col);
-  }, {passive:false});
+    const r=canvas.getBoundingClientRect();
+    const sx=canvas.width/r.width, sy=canvas.height/r.height;
+    const col=Math.floor((t.clientX-r.left)*sx/TILE), row=Math.floor((t.clientY-r.top)*sy/TILE);
+    if(row>=0&&row<ROWS&&col>=0&&col<COLS) handleClick(row,col);
+  },{passive:false});
 
-  boosterBtns.forEach(b=>b.addEventListener('click',()=>activateBooster(b.dataset.type)));
+  boosterBtns.forEach(b=>b.addEventListener('click',()=>actB(b.dataset.type)));
   document.getElementById('shop-btn').addEventListener('click',()=>shopModal.style.display='flex');
   document.getElementById('close-shop').addEventListener('click',()=>shopModal.style.display='none');
-  shopModal.addEventListener('click', e => {
-    if (e.target.classList.contains('buy-btn')) {
+  shopModal.addEventListener('click',e=>{
+    if(e.target.classList.contains('buy-btn')) {
       const item=e.target.dataset.item;
-      if (item) buyItem(item); else if (e.target.id==='buyGoldBtn') buyGold();
+      if(item) buyItem(item); else if(e.target.id==='buyGoldBtn') buyGold();
     }
   });
 
-  if (window.Telegram?.WebApp) { Telegram.WebApp.ready(); Telegram.WebApp.expand(); }
+  if(window.Telegram?.WebApp) { Telegram.WebApp.ready(); Telegram.WebApp.expand(); }
   newGame();
 })();
 </script>
